@@ -4,6 +4,7 @@ using System.Reflection;
 using System.IO;
 using System.Collections.Generic;
 using UnityEngine.Polybrush;
+using UnityEditor.PackageManager;
 using Polybrush;
 
 namespace UnityEditor.Polybrush
@@ -13,7 +14,24 @@ namespace UnityEditor.Polybrush
     /// </summary>
 	static class PolyEditorUtility
 	{
-		const string k_PackageDirectory = "Packages/com.unity.polybrush";
+		// The package folder name is not guaranteed: a fork may be installed under a
+		// different id. Resolve it from the assembly definition's package instead of
+		// hardcoding the upstream name, which would silently break asset lookups.
+		static string k_PackageDirectory
+		{
+			get
+			{
+				if (s_PackageDirectory == null)
+				{
+					var info = PackageInfo.FindForAssembly(typeof(PolyEditorUtility).Assembly);
+					s_PackageDirectory = info != null ? info.assetPath : "Packages/com.unity.polybrush";
+				}
+
+				return s_PackageDirectory;
+			}
+		}
+
+		static string s_PackageDirectory;
 		const string k_UserAssetDirectory = "Assets/Polybrush Data/";
 
 		/// <summary>

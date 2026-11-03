@@ -9,7 +9,12 @@ namespace UnityEditor.Polybrush
 	[InitializeOnLoad]
 	internal static class IconUtility
 	{
-		const string k_IconFolder = "Packages/com.unity.polybrush/Content/Icons/";
+		// Resolved at runtime so the fork keeps working regardless of how the package
+		// folder is named (com.unity.polybrush, com.community.polybrush, or a local copy).
+		static string k_IconFolder
+		{
+			get { return PolyEditorUtility.RootFolder + "/Content/Icons/"; }
+		}
 		static Dictionary<string, Texture2D> m_icons = new Dictionary<string, Texture2D>();
 
 		internal static Texture2D GetIcon(string iconName)

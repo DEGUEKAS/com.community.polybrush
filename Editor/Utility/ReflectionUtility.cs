@@ -1,8 +1,11 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using UnityEngine;
 using System;
 using System.Reflection;
 using System.Linq;
+#if UNITY_6000_6_OR_NEWER
+using UnityEngine.Assemblies;
+#endif
 
 namespace UnityEditor.Polybrush
 {
@@ -31,10 +34,17 @@ namespace UnityEditor.Polybrush
 
             if(t == null)
             {
+#if UNITY_6000_6_OR_NEWER
+                // Unity 6.6 reports AppDomain.CurrentDomain.GetAssemblies() as error UAC0005
+                // because it may return assemblies that have already been unloaded.
+                // CurrentAssemblies.GetLoadedAssemblies() is the supported replacement.
+                IEnumerable<Assembly> assemblies = CurrentAssemblies.GetLoadedAssemblies();
+#else
                 IEnumerable<Assembly> assemblies = AppDomain.CurrentDomain.GetAssemblies();
+#endif
 
                 if(assembly != null)
-                    assemblies = assemblies.Where(x => x.FullName.Contains(assembly));
+                    assemblies = assemblies.Where(x => x.FullName != null && x.FullName.Contains(assembly));
 
                 foreach(Assembly ass in assemblies)
                 {

@@ -20,6 +20,13 @@ namespace UnityEditor.Polybrush
 		internal const string k_MeshInstancePrefix = "PolybrushMesh";
 
         /// <summary>
+        /// Sentinel returned by GetMeshId() when a mesh is not a Polybrush-managed instance.
+        /// Historically this was -1 (an int), but EntityId raw values are ulong, so 0 is
+        /// used instead: EntityId.None.GetRawData() == 0 and IsValid() == false.
+        /// </summary>
+        internal const long k_InvalidMeshId = 0L;
+
+        /// <summary>
         /// Set true to rebuild mesh normals when sculpting the object.
         /// </summary>
         [UserSetting("General Settings", "Rebuild Normals", "After a mesh modification the normals will be recalculated.")]
@@ -311,7 +318,7 @@ namespace UnityEditor.Polybrush
                     }
                 }
 
-                mesh.name = k_MeshInstancePrefix + gameObjectAttached.GetInstanceID();
+                mesh.name = k_MeshInstancePrefix + GetObjectId(gameObjectAttached);
             }
 
             polybrushMesh.SetMesh(mesh);
@@ -335,11 +342,11 @@ namespace UnityEditor.Polybrush
 
         ~EditableObject()
 		{
-            // clean up the composite mesh (if required)
-            // delayCall ensures Destroy is called on main thread
-            // if(editMesh != null)
-            // 	EditorApplication.delayCall += () => { GameObject.DestroyImmediate(editMesh); };
-        }
+			// clean up the composite mesh (if required)
+			// delayCall ensures Destroy is called on main thread
+			// if(editMesh != null)
+			// 	EditorApplication.delayCall += () => { GameObject.DestroyImmediate(editMesh); };
+		}
 
         /// <summary>
         /// Applies mesh changes back to the pb_Object (if necessary).  Optionally does a
@@ -348,7 +355,7 @@ namespace UnityEditor.Polybrush
         /// <param name="rebuildMesh">Only applies to ProBuilder meshes.</param>
         /// <param name="optimize">Determines if the mesh collisions are rebuilt (if that option is enabled) or if
         /// the mehs is a probuilder object, the mesh is optimized (condensed to share verts, other
-        /// otpimziations etc) </param>
+        /// otpimizations etc) </param>
         internal void Apply(bool rebuildMesh, bool optimize = false)
         {
             if (m_PolybrushMesh.mode == PolybrushMesh.Mode.AdditionalVertexStream)
@@ -523,49 +530,107 @@ namespace UnityEditor.Polybrush
 			return gameObjectAttached != null ? gameObjectAttached.GetHashCode() : base.GetHashCode();
 		}
 
-		internal static int GetMeshId(Mesh mesh)
-		{
-			if (mesh == null)
-				return -1;
+        /// <summary>
+        /// Returns the raw EntityId value of an Object as a long, so it can be encoded
+        /// into a mesh name and recovered later.
+        ///
+        /// The raw value is a ulong. Unity guarantees it is representable by int *today*
+        /// via an implicit cast, but that cast is already marked obsolete
+        /// ("EntityId will not be representable by an int in the future"), so the full
+        /// 64-bit value is preserved here. To keep the value safely inside long for the
+        /// name round-trip, range errors would surface as negative values rather than
+        /// silently truncating.
+        /// </summary>
+        internal static long GetObjectId(UnityEngine.Object obj)
+        {
+            if (obj == null)
+                return k_InvalidMeshId;
 
-			int meshId = -1;
-			string meshName = mesh.name;
+#if UNITY_6000_6_OR_NEWER
+            return (long)obj.GetEntityId().GetRawData();
+#else
+#pragma warning disable 618
+            return obj.GetInstanceID();
+#pragma warning restore 618
+#endif
+        }
 
-			if(!meshName.StartsWith(k_MeshInstancePrefix) || !int.TryParse(meshName.Replace(k_MeshInstancePrefix, ""), out meshId))
-				return meshId;
+        /// <summary>
+        /// Parses the EntityId/instance id out of a Polybrush-managed mesh name.
+        /// Returns k_InvalidMeshId when the mesh is not managed by Polybrush.
+        /// </summary>
+        internal static long GetMeshId(Mesh mesh)
+        {
+            if (mesh == null)
+                return k_InvalidMeshId;
 
-			return meshId;
-		}
+            string meshName = mesh.name;
+
+            if (string.IsNullOrEmpty(meshName) || !meshName.StartsWith(k_MeshInstancePrefix))
+                return k_InvalidMeshId;
+
+            long parsed;
+            if (!long.TryParse(meshName.Substring(k_MeshInstancePrefix.Length), out parsed))
+                return k_InvalidMeshId;
+
+            return parsed;
+        }
+
+        /// <summary>
+        /// Rebuilds the Polybrush mesh name for a GameObject. Kept in one place so the
+        /// encoding and decoding of the id can never drift apart.
+        /// </summary>
+        internal static string GetMeshInstanceName(UnityEngine.Object obj)
+        {
+            return k_MeshInstancePrefix + GetObjectId(obj);
+        }
 
 		static bool MeshInstanceMatchesGameObject(Mesh mesh, GameObject go)
 		{
             if (ProBuilderBridge.IsValidProBuilderMesh(go))
                 return true;
 
-            int gameObjectId = go.GetInstanceID();
-			int meshId = GetMeshId(mesh);
+            long gameObjectId = GetObjectId(go);
+			long meshId = GetMeshId(mesh);
 
 			// If the mesh id doesn't parse to an ID it's definitely not an instance
-			if(meshId == -1)
+			if(meshId == k_InvalidMeshId)
 				return false;
 
-			// If the mesh id matches the instance id, it's already a scene instance owned by this object. If doesn't match,
-			// next check that the mesh id gameObject does not exist. If it does exist, that means this mesh was duplicated
+			// If the mesh id matches the object id, it's already a scene instance owned by this object. If doesn't match,
+			// next check that the mesh id object does not exist. If it does exist, that means this mesh was duplicated
 			// and already belongs to another object in the scene. If it doesn't exist, then it just means that the GameObject
 			// id was changed as a normal part of the GameObject lifecycle.
 			if (meshId == gameObjectId)
 				return true;
 
-			// If it is an instance, and the IDs don't match but no existing GameObject claims this mesh, claim it.
-			if (EditorUtility.InstanceIDToObject(meshId) == null)
+			// If it is an instance, and the IDs don't match but no existing object claims this mesh, claim it.
+			if (ObjectFromId(meshId) == null)
 			{
-				mesh.name = k_MeshInstancePrefix + go.GetInstanceID();
+				mesh.name = GetMeshInstanceName(go);
 				return true;
 			}
 
 			// The mesh did not match the gameObject id, and the mesh id points to an already existing object in the scene.
 			return false;
 		}
+
+        /// <summary>
+        /// Resolves a stored 64-bit object id back to a live UnityEngine.Object.
+        /// </summary>
+        internal static UnityEngine.Object ObjectFromId(long id)
+        {
+            if (id == k_InvalidMeshId)
+                return null;
+
+#if UNITY_6000_6_OR_NEWER
+            return EditorUtility.EntityIdToObject(EntityId.FromULong((ulong)id));
+#else
+#pragma warning disable 618
+            return EditorUtility.InstanceIDToObject((int)id);
+#pragma warning restore 618
+#endif
+        }
 
         internal void RemovePolybrushComponentsIfNecessary()
         {
