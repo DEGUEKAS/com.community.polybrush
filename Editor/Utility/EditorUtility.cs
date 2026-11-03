@@ -4,7 +4,6 @@ using System.Reflection;
 using System.IO;
 using System.Collections.Generic;
 using UnityEngine.Polybrush;
-using UnityEditor.PackageManager;
 using Polybrush;
 
 namespace UnityEditor.Polybrush
@@ -15,23 +14,50 @@ namespace UnityEditor.Polybrush
 	static class PolyEditorUtility
 	{
 		// The package folder name is not guaranteed: a fork may be installed under a
-		// different id. Resolve it from the assembly definition's package instead of
-		// hardcoding the upstream name, which would silently break asset lookups.
+		// different id. Resolve it from this assembly definition's own asset path rather
+		// than hardcoding the upstream name, which would silently break asset lookups.
+		//
+		// PackageInfo.FindForAssembly() is deliberately not used: it lives in
+		// UnityEditor.CoreModule, which this assembly definition does not reference,
+		// so the compiler reports CS0117. AssetDatabase needs no extra reference.
 		static string k_PackageDirectory
 		{
 			get
 			{
 				if (s_PackageDirectory == null)
-				{
-					var info = PackageInfo.FindForAssembly(typeof(PolyEditorUtility).Assembly);
-					s_PackageDirectory = info != null ? info.assetPath : "Packages/com.unity.polybrush";
-				}
+					s_PackageDirectory = ResolvePackageDirectory();
 
 				return s_PackageDirectory;
 			}
 		}
 
 		static string s_PackageDirectory;
+
+		/// <summary>
+		/// Finds the package root (for example "Packages/com.community.polybrush") by locating
+		/// this package's own asmdef through AssetDatabase, then trimming the folder after it.
+		/// Returns null when it cannot be resolved so callers can fall back safely.
+		/// </summary>
+		static string ResolvePackageDirectory()
+		{
+			string[] guids = AssetDatabase.FindAssets("Unity.Polybrush.Editor t:AssemblyDefinitionAsset");
+
+			foreach (string guid in guids)
+			{
+				string asmdefPath = AssetDatabase.GUIDToAssetPath(guid);
+
+				if (string.IsNullOrEmpty(asmdefPath))
+					continue;
+
+				// "Packages/<pkg>/Editor/Unity.Polybrush.Editor.asmdef" -> "Packages/<pkg>"
+				int marker = asmdefPath.LastIndexOf("/Editor/", System.StringComparison.Ordinal);
+
+				if (marker > 0)
+					return asmdefPath.Substring(0, marker);
+			}
+
+			return null;
+		}
 		const string k_UserAssetDirectory = "Assets/Polybrush Data/";
 
 		/// <summary>

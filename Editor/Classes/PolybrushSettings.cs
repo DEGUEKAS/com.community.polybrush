@@ -4,14 +4,22 @@ namespace UnityEditor.Polybrush
 {
     static class PolybrushSettings
     {
-        // Use this package's own name so the settings store follows the installed
-        // package id rather than the upstream one it was forked from.
+        // Derive the settings key from the package folder this code actually ships in,
+        // so the fork does not keep writing under the upstream package id.
+        //
+        // PackageInfo is not referenced by this assembly definition (CS0117), so the id
+        // is taken from the resolved package directory instead.
         internal static string k_PackageName
         {
             get
             {
-                var info = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(PolybrushSettings).Assembly);
-                return info != null ? info.name : "com.community.polybrush";
+                string dir = PolyEditorUtility.RootFolder;
+
+                if (string.IsNullOrEmpty(dir))
+                    return "com.community.polybrush";
+
+                int slash = dir.LastIndexOf('/');
+                return slash >= 0 ? dir.Substring(slash + 1) : dir;
             }
         }
 
